@@ -3,7 +3,7 @@
 This repository includes two Bash scripts:
 
 1. `install_ffmpeg.sh` – Installs FFmpeg to `/opt/ffmpeg`.
-2. `ffmpeg_av1_encode` – Encodes video files to AV1 using FFmpeg with few customizable parameters.
+2. `ffmpeg_av1_encode.sh` – Encodes video files to AV1 using FFmpeg with few customizable parameters.
 
 ---
 
@@ -53,7 +53,7 @@ You should see `libsvtav1` listed in the configuration output.
 
 ---
 
-## ffmpeg_av1_encode.sh – Encode Files in AV1
+## .sh – Encode Files in AV1
 
 This script uses the FFmpeg binary from `/opt/ffmpeg` to encode video files in AV1 format with 10bits (`yuv420p10le`).
 
@@ -71,8 +71,8 @@ The script will search for all files inside the source directory based on the ex
 ### Usage
 
 ```bash
-chmod +x ffmpeg_av1_encode.sh
-./ffmpeg_av1_encode.sh
+chmod +x .sh
+./.sh
 ```
 
 ---
