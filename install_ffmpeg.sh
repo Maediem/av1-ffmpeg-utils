@@ -5,7 +5,7 @@
 #############
 
 AUTH_USER=$(whoami)
-FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl-shared.tar.xz"
+FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl-shared.tar.xz"
 DOWNLOAD_DIR="$HOME/Downloads"
 EXTRACTED_DIR="ffmpeg-master-latest-linux64-gpl-shared"
 INSTALL_DIR="/opt/ffmpeg"
