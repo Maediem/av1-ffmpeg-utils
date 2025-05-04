@@ -15,7 +15,7 @@ AV1 is a modern, open-source video codec developed by the Alliance for Open Medi
 
 AV1 offers significantly better compression while maintaining the same visual quality:
 
-- **Compared to x264 (H.264)**: AV1 is ~40–50% more efficient.
+- **Compared to x264 (H.264)**: AV1 is ~30–50% more efficient.
 - **Compared to x265 (HEVC)**: AV1 is ~20–30% more efficient.
 
 This means smaller file sizes with equal or better video quality — ideal for archiving, streaming, and storage-limited environments.
