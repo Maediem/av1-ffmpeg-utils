@@ -1,8 +1,8 @@
 #!/bin/bash
 
-#####################
-# INSTALLATION TIPS #
-#####################
+############################
+# FFMPEG INSTALLATION TIPS #
+############################
 # 1. Go to the following: https://github.com/BtbN/FFmpeg-Builds/releases
 #
 # 2. Download the following (latest): ffmpeg-master-latest-linux64-gpl-shared.tar.xz 
@@ -23,9 +23,9 @@
 # 6. Open terminal and test the following: ffmpeg -version
 
 
-#####################################################
-################# BINDINGS/FEATURES #################
-#####################################################
+############################################
+# BINDINGS/FEATURES LIKE TAB AUTO-COMPLETE #
+############################################
 
 # Enable line editing
 set -o emacs
@@ -34,14 +34,27 @@ set -o emacs
 _path_completion(){
     local path
     path=${READLINE_LINE:0:${READLINE_POINT}}
-    completions=$(compgen -f -- "$path")
+    local completions
+    completions=$(compgen -f -- "$path") # -f for files/dirs
 
-    # Check if there is only one completion
-    if [ $(echo "$completions" | wc -l) -eq 1 ]; then
+    local num_completons=0
+    if [[ -n "$completions" ]]; then
+    	# Count non-empty lines if completions is no empty
+    	# 'echo -n' prevents adding extra newline if $completions i empty
+    	# 'grep -c .' counts lines that contain at least one character
+    	num_compltions=0
+    fi
+    
+    if [[ $num_completions -eq 1 ]]; then
+        # Only 1 completion found.
         READLINE_LINE=${completions}
         READLINE_POINT=${#READLINE_LINE}
+        COMPREPLY=() # Clear any previous suggestions
+    elif [[ $num_completions -gt 1 ]]; then
+        mapfile -t COMPREPLY < <(echo -n "$completions")
     else
-        COMPREPLY=($completions)
+        # No completions or empty lines
+        COMPRELY=()
     fi
 }
 
@@ -61,10 +74,10 @@ complete -o nospace -F _path_completion read
 #############
 
 # Colors
-YELLOW='\033[1;33m'
-GREEN='\033[1;32m'
-RED='\033[1;31m'
-RESET_COLOR='\033[0m'  # Resets color back to default
+YELLOW=$(tput setaf 3; tput bold)
+GREEN=$(tput setaf 2; tput bold)
+RED=$(tput setaf 1; tput bold)
+RESET_COLOR=$(tput sgr0)  # Resets color back to default 
 
 # Default values
 DEFAULT_SRC_LOCATION="/mnt/TeamGroupTC/VideoCompressing/todo"
@@ -94,10 +107,23 @@ echo "Enter the source location (default: \"$DEFAULT_SRC_LOCATION\"): "
 read -e -p "" SRC_LOCATION
 SRC_LOCATION="${SRC_LOCATION:-$DEFAULT_SRC_LOCATION}"
 
+# Validating permissions
+if [[ ! -d "$SRC_LOCATION" || ! -r "$SRC_LOCATION" ]]; then
+    echo -e "${RED}Error${RESET_COLOR}: Source location \"$SRC_LOCATION\" is not a readable directory." >&2
+    exit 1
+fi
+
 echo -e "\nEnter the destination location (default: \"$DEFAULT_DST_LOCATION\"):"
 read -e -p "" DST_LOCATION
 echo ""
 DST_LOCATION="${DST_LOCATION:-$DEFAULT_DST_LOCATION}"
+
+# Check if DST_LOCATION itself is writable, or if not exists, its parent is.
+if [[ -d "$DST_LOCATION" && ! -w "$DST_LOCATION" ]] || \
+   [[ ! -d "$DST_LOCATION" && ! -w "$(dirname "$DST_LOCATION")" ]]; then
+    echo -e "${RED}Error${RESET_COLOR}: Destination location \"$DST_LOCATION\" is not writable." >&2
+    exit 1
+fi
 
 # Prompt user for content type
 echo "Select content type:"
@@ -136,12 +162,24 @@ echo " - CRF 21–24 typically offers high-quality results with better compressi
 read -p "Enter the CRF value (default: $DEFAULT_CRF): " CRF_VALUE
 CRF_VALUE="${CRF_VALUE:-$DEFAULT_CRF}"
 
+# Validating the CRF input
+if ! [[ "$CRF_VALUE" =~ ^[0-9]+$ ]] || (( CRF_VALUE < 0 || CRF_VALUE > 63 )); then 
+    echo -e "${RED}Error${RESET_COLOR}: Invalid CRF value. Must be an integer (e.g., 0-63)." >&2
+    exit 1
+fi
+
 # Prompt for preset
 echo -e "\nIn AV1 encoding, a lower preset are slower, but enable more more advance encoding tools, leading to better quality for a given bitrate (or smaller files for given CRF)."
 echo " - Preset 0-2: Often used by professionals to maximize quality and compression efficiency. Time is not a primary concern."
 echo " - Preset 3-5: Often used by high-quality enthusiasts to ensure excellent quality, good file sizes. Balances quality with reasonable encode times."
 read -p "Enter the FFmpeg preset (0-12) (default: $DEFAULT_PRESET): " PRESET_VALUE
 PRESET_VALUE="${PRESET_VALUE:-$DEFAULT_PRESET}"
+
+# Validating the preset input
+if ! [[ "$PRESET_VALUE" =~ ^[0-9]+$ ]] || (( PRESET_VALUE < 0 || PRESET_VALUE > 12 )); then # SVT-AV1 preset
+    echo -e "${RED}Error${RESET_COLOR}: Invalid preset value. Must be an integer (e.g., 0-12)." >&2
+    exit 1
+fi
 
 # Prompt for fixing videos before encoding them
 echo -e "\nThis option will verify the video for potential issues. If needed, it will create a fixed copy to resolve problems such as incorrect timestamps, minor corruption, and container-related errors. However, severe corruption (e.g., damaged frames) requires full re-encoding and cannot be fixed with this method."
@@ -171,22 +209,18 @@ echo -e "${YELLOW}====================${RESET_COLOR}"
 #############
 
 run_command() {
-    echo -e "${YELLOW}====================${RESET_COLOR}"
-    
-    if [[ $# -eq 1 ]]; then
-        # If a single string argument is passed, execute it with eval
-        echo -e "${YELLOW}Running command${RESET_COLOR}: \"$1\""
-        eval "$1"
-    elif [[ $# -gt 1 ]]; then
-        # If multiple arguments are passed, treat them as an array command
-        echo -e "${YELLOW}Running command${RESET_COLOR}: $*"
-        "$@"
-    else
-        echo -e "${RED}Error: No command provided!${RESET_COLOR}"
-        return 1
+    if [[ $# -eq 0 ]]; then
+        echo -e "${RED}Error${RESET_COLOR}: No command provided."
+        return 1 # Indicate failure
     fi
-
+    
     echo -e "${YELLOW}====================${RESET_COLOR}"
+    echo -e "${YELLOW}Running command${RESET_COLOR}: ${*@Q}"
+    echo -e "${YELLOW}====================${RESET_COLOR}"
+    "$@" # Execute command
+    
+    local exit_status=$? # Capture exit status of the command
+    return $exit_status
 }
 
 
@@ -218,7 +252,7 @@ set_color_value(){
     
     if ! [[ "$height" =~ ^[0-9]+$ ]]; then
         echo "Error: Height '$height' is not a valid number." >&2
-        exit 1
+        return 1
     fi
 
     # Provide smart defaults based on height
@@ -252,7 +286,7 @@ set_color_value(){
             ;;
         *)
             echo "Error: Unknown color_type specified: $color_type" >&2
-            exit 1
+            return 1
             ;;
     esac
 }
@@ -262,18 +296,33 @@ set_gop_value(){
     local metadata="$1"
     local gop="240"
     local fps_raw=""
-    local fps=""
+    local fps_numerator
+    local fps_denominator
+    local fps_calculated
 
     fps_raw=$(get_value "$metadata" "r_frame_rate" "=")
     
-    if [[ -z "$fps_raw" || "$fps_raw" == "0/0" || "$fps_raw" == "N/A" ]]; then
+    if [[ -z "$fps_raw" || "$fps_raw" == "0/0" || "$fps_raw" == "N/A" || "$fps_raw" == "unknown" ]]; then
         fps_raw=$(get_value "$metadata" "avg_frame_rate" "=")
     fi
 
-    if [[ -n "$fps_raw" && "$fps_raw" != "0/0" && "$fps_raw" != "N/A" ]]; then
-        # Calculate fps for the GOP
-        fps=$(echo "scale=4; $fps_raw" | bc -l)
-        gop=$(printf "%.0f" "$(echo "$fps * 10" | bc -l)")
+    # Try to parse FPS like "24000/1001" or "25/1" or "30"
+    if [[ "$fps_raw" =~ ^([0-9]+)/([1-9][0-9]*)$ ]]; then
+        fps_numerator="${BASH_REMATCH[1]}"
+        fps_denominator="${BASH_REMATCH[2]}"
+        fps_calculated=$(echo "scale=4; $fps_numerator / $fps_denominator" | bc -l)
+    elif [[ "$fps_raw" =~ ^[0-9]+(\.[0-9]+)?$ && "$fps_raw" != "0" ]]; then # Handles integer or decimal FPS
+        fps_calculated="$fps_raw"
+    else
+        # Could not determine valid FPS from metadata. Using default
+        fps_calculated="" # Explicitly clear
+    fi
+
+    if [[ -n "$fps_calculated" ]]; then
+        # Ensure fps_calculated is a positive number before using in bc
+        if (( $(echo "$fps_calculated > 0" | bc -l) )); then
+            gop=$(printf "%.0f" "$(echo "$fps_calculated * 10" | bc -l)")
+        fi
     fi
     
     echo "$gop"
@@ -286,7 +335,7 @@ set_gop_value(){
 
 echo -e "Scanning directory: ${YELLOW}\"$SRC_LOCATION\"${RESET_COLOR} for files of type: ${YELLOW}\"$FILE_TYPE\"${RESET_COLOR}"
 
-find "$SRC_LOCATION" -type f -name "*.$FILE_TYPE" | sort | while IFS= read -r file; do
+find "$SRC_LOCATION" -type f -name "*.$FILE_TYPE" -print0 | sort -z | while IFS= read -r -d $'\0' file; do
     file_found=true 
     echo "Found file: \"$file\""
     
@@ -333,7 +382,6 @@ find "$SRC_LOCATION" -type f -name "*.$FILE_TYPE" | sort | while IFS= read -r fi
     
     # Get the full output path and make sure the directory exists
     output_path="$DST_LOCATION/$output_filename"
-    mkdir -p "$DST_LOCATION"
     
     #---------------------------------------
     # Verifying the video for potential fixes
@@ -364,10 +412,9 @@ find "$SRC_LOCATION" -type f -name "*.$FILE_TYPE" | sort | while IFS= read -r fi
                 
                 # Command to process the file
                 CMD=(ffmpeg -nostdin -i "$file" -c copy -map 0 -fflags +genpts "$fixed_file")
-                run_command "${CMD[@]}"
                 
                 # Check if ffmpeg succeeded
-                if [[ $? -eq 0 ]]; then
+                if run_command "${CMD[@]}"; then
                     mv -f "$fixed_file" "$file"
                     echo -e "Fix ${GREEN}successful${RESET_COLOR}! The original file was replaced with the fixed file."
                 else
@@ -431,6 +478,6 @@ if [ ${#UNPROCESSED_FILES[@]} -ne 0 ]; then
     fi
 
     for unprocessed_file in "${UNPROCESSED_FILES[@]}"; do
-        echo -e "- ${YELLOW}${UNPROCESSED_FILE}S${RESET_COLOR}"
+        echo -e "- ${YELLOW}${unprocessed_file}${RESET_COLOR}"
     done
 fi
