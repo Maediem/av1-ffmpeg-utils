@@ -9,7 +9,7 @@ This repository includes two Bash scripts:
 
 ## Why AV1?
 
-AV1 is a modern, open-source video codec developed by the Alliance for Open Media (AOM), designed to be the successor to both H.264 (x264) and H.265 (HEVC/x265).
+AV1 is a modern, open-source video codec developed by the Alliance for Open Media (AOM), probably to be the successor to both H.264 (x264) and H.265 (HEVC/x265).
 
 ### Compression Efficiency
 
