@@ -1,26 +1,9 @@
 #!/bin/bash
 
-############################
-# FFMPEG INSTALLATION TIPS #
-############################
-# 1. Go to the following: https://github.com/BtbN/FFmpeg-Builds/releases
-#
-# 2. Download the following (latest): ffmpeg-master-latest-linux64-gpl-shared.tar.xz 
-#
-# 3. Unzip and move the directory:
-#     cd /path/to/directory
-#     tar -xf ffmpeg-master-latest-linux64-gpl-shared.tar.xz
-#     mv ffmpeg-master-latest-linux64-gpl-shared /opt/ffmpeg
-#
-# 4. Create the proper profiles:
-#     echo 'export PATH="/opt/ffmpeg/bin:$PATH"' | sudo tee /etc/profile.d/ffmpeg.sh 
-#     echo 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/ffmpeg/lib' | sudo tee /etc/profile.d/ffmpeg_lib.sh
-#
-# 5. Add the profiles as source
-#     source /etc/profile.d/ffmpeg.sh
-#     source /etc/profile.d/ffmpeg_lib.sh
-#
-# 6. Open terminal and test the following: ffmpeg -version
+#######################
+# FFMPEG INSTALLATION #
+#######################
+# Use the ffmpeg_install.sh script to download and install the latest ffmpeg available from https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest
 
 
 ############################################
@@ -126,8 +109,8 @@ if [[ -d "$DST_LOCATION" && ! -w "$DST_LOCATION" ]] || \
 fi
 
 # Prompt user for content type
-echo "Select content type (default: Live Action):"
-echo "1) Live Action (Non-Anime)"
+echo "Select content type (default: Live-Action):"
+echo "1) Live-Action (Non-Anime)"
 echo "2) Anime"
 read -p "Enter 1 or 2: " content_type
 
@@ -135,8 +118,8 @@ read -p "Enter 1 or 2: " content_type
 case "$content_type" in
     1)
         AV1_PARAMS="$AV1_PARAMS_LIVE_ACTION"
-        echo -e "\nUsing Live Action AV1 parameters."
-        content_type="Live Action"
+        echo -e "\nUsing Live-Action AV1 parameters."
+        content_type="Live-Action"
         ;;
     2)
         AV1_PARAMS="$AV1_PARAMS_ANIME"
@@ -144,9 +127,9 @@ case "$content_type" in
         content_type="Anime"
         ;;
     *)
-        echo -e "\nInvalid choice. Defaulting to Live Action settings."
+        echo -e "\nInvalid choice. Defaulting to Live-Action settings."
         AV1_PARAMS="$AV1_PARAMS_LIVE_ACTION"
-        content_type="Live Action"
+        content_type="Live-Action"
         ;;
 esac
 
