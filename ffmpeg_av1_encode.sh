@@ -3,7 +3,7 @@
 #######################
 # FFMPEG INSTALLATION #
 #######################
-# Use the ffmpeg_install.sh script to download and install the latest ffmpeg available from https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest
+# Use the install_ffmpeg.sh script to download and install the latest ffmpeg available from https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest
 
 
 ############################################
