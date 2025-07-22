@@ -11,12 +11,15 @@ This repository includes two Bash scripts:
 
 AV1 is a modern, open-source video codec developed by the Alliance for Open Media (AOM), probably to be the successor to both H.264 (x264) and H.265 (HEVC/x265).
 
+
+
 ### Compression Efficiency
 
 AV1 offers significantly better compression while maintaining the same visual quality:
 
 - **Compared to x264 (H.264)**: AV1 is ~30–50% more efficient.
 - **Compared to x265 (HEVC)**: AV1 is ~20–30% more efficient.
+- As a general rule of thumb, AV1 CRF values are about 4 points higher than x265 for similar quality. For example, CRF 20 with AV1 is roughly equivalent to CRF 16 with x265.
 
 This means smaller file sizes with equal or better video quality — ideal for archiving, streaming, and storage-limited environments.
 
@@ -53,9 +56,9 @@ You should see `libsvtav1` listed in the configuration output.
 
 ---
 
-## .sh – Encode Files in AV1
+## Encode Files in AV1
 
-This script uses the FFmpeg binary from `/opt/ffmpeg` to encode video files in AV1 format with 10bits (`yuv420p10le`).
+This script uses the FFmpeg binary to encode video files in AV1 format with 10bits (`yuv420p10le`).
 
 ### Configuration
 
@@ -79,35 +82,7 @@ chmod +x .sh
 
 ## Encoding Presets
 
-The script includes two sets of AV1 encoding parameters optimized for different types of content:
-
-### AV1_PARAMS_NON_ANIME
-
-```bash
-AV1_PARAMS_NON_ANIME="tune=0:enable-overlays=1:scd=1:scm=0:film-grain=5:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
-```
-
-**Best for:** Live-action, general video content  
-**Key options:**
-
-- `tune=0`: Live-action tuning
-- `film-grain=5`: Adds subtle grain for realism
-- `aq-mode=2`: Strong adaptive quantization
-- `enable-*`: Enables filtering and prediction layers
-
-### AV1_PARAMS_ANIME
-
-```bash
-AV1_PARAMS_ANIME="tune=1:enable-overlays=1:scd=1:scm=1:film-grain=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=1"
-```
-
-**Best for:** Anime, cartoons, and animated series  
-**Key options:**
-
-- `tune=1`: Animation tuning
-- `scm=1`: Screen content mode for sharp lines
-- `film-grain=0`: No grain for clean visuals
-- `aq-mode=1`: Balanced adaptive quantization
+The script includes two sets of AV1 encoding parameters optimized for either live-action or anime content.
 
 ---
 
