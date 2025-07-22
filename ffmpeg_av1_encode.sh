@@ -92,7 +92,7 @@ FILE_FOUND=false
 CODEC="libsvtav1"
 
 # Global AV1 encoding parameters
-AV1_PARAMS_LIVE_ACTION="tune=0:enable-overlays=1:scd=1:scm=0:film-grain=2:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
+AV1_PARAMS_LIVE_ACTION="tune=0:enable-overlays=1:scd=1:scm=0:film-grain=1:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
 AV1_PARAMS_ANIME="tune=1:enable-overlays=1:scd=1:scm=0:film-grain=0:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
 AV1_PARAMS=""
 
@@ -126,7 +126,7 @@ if [[ -d "$DST_LOCATION" && ! -w "$DST_LOCATION" ]] || \
 fi
 
 # Prompt user for content type
-echo "Select content type:"
+echo "Select content type (default: Live Action):"
 echo "1) Live Action (Non-Anime)"
 echo "2) Anime"
 read -p "Enter 1 or 2: " content_type
@@ -157,8 +157,9 @@ FILE_TYPE="${FILE_TYPE:-$DEFAULT_FILE_TYPE}"
 
 # Prompt for CRF value
 echo -e "\nIn AV1 encoding, a lower CRF (Constant Rate Factor) means higher quality and a larger file size."
-echo " - CRF 18–20 is generally considered visually lossless or nearly indistinguishable from the original."
-echo " - CRF 21–24 typically offers high-quality results with better compression, suitable for streaming or storage where space matters."
+echo " - CRF 20–23 is generally considered visually lossless or nearly indistinguishable from the original."
+echo " - CRF 24–28 typically offers high-quality results with better compression, suitable for streaming or storage where space matters."
+echo " - As a general rule of thumb, AV1 CRF values are about 4 points higher than x265 for similar quality. For example, CRF 20 with AV1 is roughly equivalent to CRF 16 with x265."
 read -p "Enter the CRF value (default: $DEFAULT_CRF): " CRF_VALUE
 CRF_VALUE="${CRF_VALUE:-$DEFAULT_CRF}"
 
@@ -169,7 +170,7 @@ if ! [[ "$CRF_VALUE" =~ ^[0-9]+$ ]] || (( CRF_VALUE < 0 || CRF_VALUE > 63 )); th
 fi
 
 # Prompt for preset
-echo -e "\nIn AV1 encoding, a lower preset are slower, but enable more more advance encoding tools, leading to better quality for a given bitrate (or smaller files for given CRF)."
+echo -e "\nIn AV1 encoding, a lower preset are slower, but enable more advance encoding tools, leading to better quality for a given bitrate (or smaller files for given CRF)."
 echo " - Preset 0-2: Often used by professionals to maximize quality and compression efficiency. Time is not a primary concern."
 echo " - Preset 3-5: Often used by high-quality enthusiasts to ensure excellent quality, good file sizes. Balances quality with reasonable encode times."
 read -p "Enter the FFmpeg preset (0-12) (default: $DEFAULT_PRESET): " PRESET_VALUE
