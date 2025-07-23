@@ -74,8 +74,8 @@ The script will search for all files inside the source directory based on the ex
 ### Usage
 
 ```bash
-chmod +x .sh
-./.sh
+chmod +x ffmpeg_av1_encode.sh
+./ffmpeg_av1_encode.sh
 ```
 
 ---
