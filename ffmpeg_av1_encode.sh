@@ -1,54 +1,57 @@
 #!/bin/bash
 
+#############
+# OBJECTIVE #
+#############
+
+# This script is designed to batch-process video files, converting them to the AV1 codec using FFmpeg.
+# It features interactive configuration, logging with verbosity levels, and error handling for individual files.
+
 #######################
-# FFMPEG INSTALLATION #
+# USER CONFIGURATIONS #
 #######################
-# Use the install_ffmpeg.sh script to download and install the latest ffmpeg available from https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest
+
+# --- Logging Configuration ---
+# Set to "true" to enable writing logs to a file. Set to "false" to only print to the console.
+LOGGING_ENABLED=true
+
+# The full path to the log file. The script will attempt to create the directory if it doesn't exist.
+# Command to read the errors: awk '/^\[.*\]\[ERROR\]/ {p=1} /^\[/ && !/\[ERROR\]/ {p=0} p' /var/log/ffmpeg-av1-encode.log
+readonly LOG_FILE_PATH="/var/log/ffmpeg-av1-encode.log"
+
+# Set the desired logging verbosity. Messages with a level equal to or higher than this will be logged.
+# Available levels (from most to least verbose): DEBUG, INFO, WARN, ERROR
+readonly CONFIG_LOG_LEVEL="INFO"
+
+# --- Default Encoding Values ---
+# These are the default settings presented to the user during the interactive setup.
+readonly DEFAULT_SRC_LOCATION="/mnt/TeamGroupTC/VideoCompressing/todo"
+readonly DEFAULT_DST_LOCATION="/mnt/TeamGroupTC/VideoCompressing/done"
+readonly DEFAULT_FILE_TYPE="mkv"
+readonly DEFAULT_CRF=23
+readonly DEFAULT_PRESET=3
+readonly DEFAULT_VERIFY_FIX_VIDEOS="y"
 
 
-############################################
-# BINDINGS/FEATURES LIKE TAB AUTO-COMPLETE #
-############################################
+############################
+# CORE SCRIPT DEPENDENCIES #
+############################
 
-# Enable line editing
+# Enable extended command-line editing features (like history search) for the `read` command.
 set -o emacs
 
-# Function for path completion
-_path_completion(){
-    local path
-    path=${READLINE_LINE:0:${READLINE_POINT}}
-    local completions
-    completions=$(compgen -f -- "$path") # -f for files/dirs
+# Configure key bindings for a better interactive experience.
+bind 'set show-all-if-ambiguous on' # Show possible completions on the first Tab press.
+bind '"\e[A": history-search-backward' # Up arrow searches history based on current input.
+bind '"\e[B": history-search-forward'  # Down arrow does the same.
 
-    local num_completons=0
-    if [[ -n "$completions" ]]; then
-    	# Count non-empty lines if completions is no empty
-    	# 'echo -n' prevents adding extra newline if $completions i empty
-    	# 'grep -c .' counts lines that contain at least one character
-    	num_compltions=0
-    fi
-    
-    if [[ $num_completions -eq 1 ]]; then
-        # Only 1 completion found.
-        READLINE_LINE=${completions}
-        READLINE_POINT=${#READLINE_LINE}
-        COMPREPLY=() # Clear any previous suggestions
-    elif [[ $num_completions -gt 1 ]]; then
-        mapfile -t COMPREPLY < <(echo -n "$completions")
-    else
-        # No completions or empty lines
-        COMPRELY=()
-    fi
+# This function provides path completion logic for commands that use it (like our `read` prompts).
+_path_completion() {
+    local current_word="${COMP_WORDS[COMP_CWORD]}"
+    COMPREPLY=($(compgen -f -- "$current_word"))
 }
 
-# Enable readline features
-bind 'set show-all-if-ambiguous on'
-#bind 'TAB:menu-complete'
-bind '"\e[A": history-search-backward'
-bind '"\e[B": history-search-forward'
-bind '"\e[C": forward-char'
-bind '"\e[D": backward-char'
-# Set the completion function for the read command
+# Register the `_path_completion` function to be triggered for the `read` command with path prompting.
 complete -o nospace -F _path_completion read
 
 
@@ -56,412 +59,338 @@ complete -o nospace -F _path_completion read
 # VARIABLES #
 #############
 
-# Colors
-YELLOW=$(tput setaf 3; tput bold)
-GREEN=$(tput setaf 2; tput bold)
-RED=$(tput setaf 1; tput bold)
-RESET_COLOR=$(tput sgr0)  # Resets color back to default 
+# Color codes for terminal output, making it easier to read.
+readonly RED=$(tput setaf 1; tput bold)
+readonly GREEN=$(tput setaf 2; tput bold)
+readonly YELLOW=$(tput setaf 3; tput bold)
+readonly BLUE=$(tput setaf 4; tput bold)
+readonly CYAN=$(tput setaf 6; tput bold)
+readonly RESET_COLOR=$(tput sgr0)
 
-# Default values
-DEFAULT_SRC_LOCATION="/mnt/TeamGroupTC/VideoCompressing/todo"
-DEFAULT_DST_LOCATION="/mnt/TeamGroupTC/VideoCompressing/done"
-DEFAULT_FILE_TYPE="mkv"
-DEFAULT_CRF=23
-DEFAULT_PRESET=3
-DEFAULT_VERIFY_FIX_VIDEOS="y"
+# Pre-defined parameter sets for the SVT-AV1 encoder, optimized for different content types.
+readonly CODEC="libsvtav1"
+readonly AV1_PARAMS_LIVE_ACTION="tune=0:enable-overlays=1:scd=1:scm=0:film-grain=1:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
+readonly AV1_PARAMS_ANIME="tune=1:enable-overlays=1:scd=1:scm=0:film-grain=0:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
 
-FILE_FOUND=false
+# Maps log level names to numerical values for easy comparison.
+readonly declare -A LOG_LEVELS=([DEBUG]=0 [INFO]=1 [WARN]=2 [ERROR]=3)
 
-CODEC="libsvtav1"
+# Associative array mapping log levels to their colors.
+readonly declare -A LOG_LEVEL_COLORS=(["DEBUG"]="$CYAN" ["INFO"]="$BLUE" ["WARN"]="$YELLOW" ["ERROR"]="$RED")
 
-# Global AV1 encoding parameters
-AV1_PARAMS_LIVE_ACTION="tune=0:enable-overlays=1:scd=1:scm=0:film-grain=1:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
-AV1_PARAMS_ANIME="tune=1:enable-overlays=1:scd=1:scm=0:film-grain=0:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
+# Global variables that will be populated by user input.
+SRC_LOCATION=""
+DST_LOCATION=""
+FILE_TYPE=""
+CRF_VALUE=""
+PRESET_VALUE=""
+VALIDATE_FIX_VIDEOS=""
 AV1_PARAMS=""
-
+CONTENT_TYPE=""
 UNPROCESSED_FILES=()
 
-#-----------------------------
-# PROMPT USER TO SET VARIABLES
-#-----------------------------
-
-# Prompt for location
-echo "Enter the source location (default: \"$DEFAULT_SRC_LOCATION\"): " 
-read -e -p "" SRC_LOCATION
-SRC_LOCATION="${SRC_LOCATION:-$DEFAULT_SRC_LOCATION}"
-
-# Validating permissions
-if [[ ! -d "$SRC_LOCATION" || ! -r "$SRC_LOCATION" ]]; then
-    echo -e "${RED}Error${RESET_COLOR}: Source location \"$SRC_LOCATION\" is not a readable directory." >&2
-    exit 1
-fi
-
-echo -e "\nEnter the destination location (default: \"$DEFAULT_DST_LOCATION\"):"
-read -e -p "" DST_LOCATION
-echo ""
-DST_LOCATION="${DST_LOCATION:-$DEFAULT_DST_LOCATION}"
-
-# Check if DST_LOCATION itself is writable, or if not exists, its parent is.
-if [[ -d "$DST_LOCATION" && ! -w "$DST_LOCATION" ]] || \
-   [[ ! -d "$DST_LOCATION" && ! -w "$(dirname "$DST_LOCATION")" ]]; then
-    echo -e "${RED}Error${RESET_COLOR}: Destination location \"$DST_LOCATION\" is not writable." >&2
-    exit 1
-fi
-
-# Prompt user for content type
-echo "Select content type (default: Live-Action):"
-echo "1) Live-Action (Non-Anime)"
-echo "2) Anime"
-read -p "Enter 1 or 2: " content_type
-
-# Set AV1 parameters based on selection
-case "$content_type" in
-    1)
-        AV1_PARAMS="$AV1_PARAMS_LIVE_ACTION"
-        echo -e "\nUsing Live-Action AV1 parameters."
-        content_type="Live-Action"
-        ;;
-    2)
-        AV1_PARAMS="$AV1_PARAMS_ANIME"
-        echo -e "\nUsing Anime AV1 parameters."
-        content_type="Anime"
-        ;;
-    *)
-        echo -e "\nInvalid choice. Defaulting to Live-Action settings."
-        AV1_PARAMS="$AV1_PARAMS_LIVE_ACTION"
-        content_type="Live-Action"
-        ;;
-esac
-
-# Prompt for file type
-echo ""
-read -p "Enter the file type to search (default: \"$DEFAULT_FILE_TYPE\"): " FILE_TYPE
-FILE_TYPE="${FILE_TYPE:-$DEFAULT_FILE_TYPE}"
-
-# Prompt for CRF value
-echo -e "\nIn AV1 encoding, a lower CRF (Constant Rate Factor) means higher quality and a larger file size."
-echo " - CRF 20–23 is generally considered visually lossless or nearly indistinguishable from the original."
-echo " - CRF 24–28 typically offers high-quality results with better compression, suitable for streaming or storage where space matters."
-echo " - As a general rule of thumb, AV1 CRF values are about 4 points higher than x265 for similar quality. For example, CRF 20 with AV1 is roughly equivalent to CRF 16 with x265."
-read -p "Enter the CRF value (default: $DEFAULT_CRF): " CRF_VALUE
-CRF_VALUE="${CRF_VALUE:-$DEFAULT_CRF}"
-
-# Validating the CRF input
-if ! [[ "$CRF_VALUE" =~ ^[0-9]+$ ]] || (( CRF_VALUE < 0 || CRF_VALUE > 63 )); then 
-    echo -e "${RED}Error${RESET_COLOR}: Invalid CRF value. Must be an integer (e.g., 0-63)." >&2
-    exit 1
-fi
-
-# Prompt for preset
-echo -e "\nIn AV1 encoding, a lower preset are slower, but enable more advance encoding tools, leading to better quality for a given bitrate (or smaller files for given CRF)."
-echo " - Preset 0-2: Often used by professionals to maximize quality and compression efficiency. Time is not a primary concern."
-echo " - Preset 3-5: Often used by high-quality enthusiasts to ensure excellent quality, good file sizes. Balances quality with reasonable encode times."
-read -p "Enter the FFmpeg preset (0-12) (default: $DEFAULT_PRESET): " PRESET_VALUE
-PRESET_VALUE="${PRESET_VALUE:-$DEFAULT_PRESET}"
-
-# Validating the preset input
-if ! [[ "$PRESET_VALUE" =~ ^[0-9]+$ ]] || (( PRESET_VALUE < 0 || PRESET_VALUE > 12 )); then # SVT-AV1 preset
-    echo -e "${RED}Error${RESET_COLOR}: Invalid preset value. Must be an integer (e.g., 0-12)." >&2
-    exit 1
-fi
-
-# Prompt for fixing videos before encoding them
-echo -e "\nThis option will verify the video for potential issues. If needed, it will create a fixed copy to resolve problems such as incorrect timestamps, minor corruption, and container-related errors. However, severe corruption (e.g., damaged frames) requires full re-encoding and cannot be fixed with this method."
-read -p "Would you like to verify and fix the video before encoding it? (default: $DEFAULT_VERIFY_FIX_VIDEOS) (y/n): " VALIDATE_FIX_VIDEOS
-VALIDATE_FIX_VIDEOS="${VALIDATE_FIX_VIDEOS:-$DEFAULT_VERIFY_FIX_VIDEOS}"
-echo ""
-
-# Ensure output directory exists
-mkdir -p "$DST_LOCATION"
-
-# Print the initial values
-echo -e "${YELLOW}====================${RESET_COLOR}"
-echo -e "${YELLOW}Data provided${RESET_COLOR}:"
-echo -e "    ${YELLOW}File type${RESET_COLOR}: \"$FILE_TYPE\""
-echo -e "    ${YELLOW}Source file location${RESET_COLOR}: \"$SRC_LOCATION\""
-echo -e "    ${YELLOW}Destination file location${RESET_COLOR}: \"$DST_LOCATION\""
-echo -e "    ${YELLOW}CRF value${RESET_COLOR}: $CRF_VALUE"
-echo -e "    ${YELLOW}Codec${RESET_COLOR}: $CODEC"
-echo -e "    ${YELLOW}Preset${RESET_COLOR}: $PRESET_VALUE"
-echo -e "    ${YELLOW}Output directory${RESET_COLOR}: \"$DST_LOCATION\""
-echo -e "    ${YELLOW}AV1 Parameters ($content_type)${RESET_COLOR}: \"$AV1_PARAMS\""
-echo -e "    ${YELLOW}Performing verification of file before encoding it${RESET_COLOR}: \"$VALIDATE_FIX_VIDEOS\""
-echo -e "${YELLOW}====================${RESET_COLOR}"
 
 #############
 # FUNCTIONS #
 #############
 
-run_command() {
-    if [[ $# -eq 0 ]]; then
-        echo -e "${RED}Error${RESET_COLOR}: No command provided."
-        return 1 # Indicate failure
-    fi
+# Central logging function. Handles console output, file logging, and verbosity levels.
+log() {
+    local level_name=${1^^}
+    local message="$2"
     
-    echo -e "${YELLOW}====================${RESET_COLOR}"
-    echo -e "${YELLOW}Running command${RESET_COLOR}: ${*@Q}"
-    echo -e "${YELLOW}====================${RESET_COLOR}"
-    "$@" # Execute command
-    
-    local exit_status=$? # Capture exit status of the command
-    return $exit_status
-}
+    local message_level=${LOG_LEVELS[$level_name]}
+    local config_level=${LOG_LEVELS[$CONFIG_LOG_LEVEL]}
 
-
-get_value(){
-    local data="$1"
-    local key_prefix="$2"
-    local delimiter="$3"
-
-    echo "$data" | grep "$key_prefix" | cut -d"$delimiter" -f2 | tr -d '"' | tr -d "'" # Remove quotes if any
-}
-
-
-set_color_value(){
-    local metadata="$1"
-    local color_type="$2"
-    
-    local value
-    value=$(get_value "$metadata" "$color_type" "=")
-    
-    # If it's not unknown or N/A, return it as-is
-    if [[ "$value" != "unknown" && "$value" != "N/A" && -n "$value" ]]; then
-        echo "$value"
+    # If the message's level is lower than the configured level, do nothing.
+    if [[ -z "$message_level" || $message_level -lt $config_level ]]; then
         return
     fi
-
-    # Get height to determine fallback
-    local height
-    height=$(get_value "$metadata" "height" "=")
     
-    if ! [[ "$height" =~ ^[0-9]+$ ]]; then
-        echo "Error: Height '$height' is not a valid number." >&2
+    local timestamp; timestamp=$(date '+%F %T')
+    
+    # Define the uncolored prefix. This is used for indentation calculation and for the log file.
+    local uncolored_prefix="[${timestamp}] [${level_name}]"
+    
+    # Get the appropriate color for the level name. Default to RESET_COLOR if not found.
+    local level_color=${LOG_LEVEL_COLORS[$level_name]:-${RESET_COLOR}}
+
+    # The indentation for continued lines is calculated from the uncolored prefix length.
+    local indent; indent=$(printf "%${#uncolored_prefix}s" " ")
+
+    # Use a flag to track if we're on the first line of a multi-line message.
+    local first_line=true
+    
+    # Process each line of the message separately to handle multi-line input correctly.
+    while IFS= read -r line; do
+        # Skip processing any empty lines that might be in the source message.
+        [[ -n "$line" ]] || continue
+
+        if "$first_line"; then
+            # Construct the colored output for the console.
+            echo -e "[${timestamp}] [${level_color}${level_name}${RESET_COLOR}] ${line}${RESET_COLOR}"
+	    
+            if [[ "$LOGGING_ENABLED" == "true" ]]; then
+                # Strip any potential colors from the message line for the log file.
+                local clean_line; clean_line=$(echo "$line" | sed 's/\x1B\[[0-9;]*[mG]//g')
+                
+		# Use the uncolored_prefix for the file log.
+                echo "${uncolored_prefix} ${clean_line}" >> "$LOG_FILE_PATH"
+            fi
+	    
+            first_line=false
+        else
+            # All subsequent lines of the same message are indented for readability.
+            echo -e "${indent}   ${line}${RESET_COLOR}"
+	    
+            if [[ "$LOGGING_ENABLED" == "true" ]]; then
+                local clean_line; clean_line=$(echo "$line" | sed 's/\x1B\[[0-9;]*[mG]//g')
+                # The indentation is also written to the log file.
+                echo "${indent}   ${clean_line}" >> "$LOG_FILE_PATH"
+            fi
+        fi
+    done <<< "$message"
+}
+
+# Safely run and display a command, returning its exit status for error handling.
+run_command() {
+    log "DEBUG" "Executing command: $(printf "'%q' " "$@")"
+    "$@"
+}
+
+# Gathers all user settings in an interactive session.
+get_user_settings() {
+    echo -e "Please provide the encoding settings. Press TAB for path completion."
+    
+    # Using `read -erp` is the robust way to create a user prompt.
+    # Source directory
+    read -erp "Enter the source location (default: \"${YELLOW}${DEFAULT_SRC_LOCATION}${RESET_COLOR}\"): " SRC_LOCATION
+    SRC_LOCATION="${SRC_LOCATION:-$DEFAULT_SRC_LOCATION}"
+    
+    if [[ ! -d "$SRC_LOCATION" || ! -r "$SRC_LOCATION" ]]; then
+        log "ERROR" "Source location \"${YELLOW}${SRC_LOCATION}${RESET_COLOR}\" is not a readable directory."
+        exit 1
+    fi
+
+    # Destination/output directory
+    read -erp "Enter the destination location (default: \"${YELLOW}${DEFAULT_DST_LOCATION}${RESET_COLOR}\"): " DST_LOCATION
+    DST_LOCATION="${DST_LOCATION:-$DEFAULT_DST_LOCATION}"
+    
+    if [[ -d "$DST_LOCATION" && ! -w "$DST_LOCATION" ]] || \
+       [[ ! -d "$DST_LOCATION" && ! -w "$(dirname "$DST_LOCATION")" ]]; then
+        log "ERROR" "Destination location \"${YELLOW}${DST_LOCATION}${RESET_COLOR}\" is not writable."
+        exit 1
+    fi
+
+    # Parameters for libsvtav1
+    echo -e "\nSelect content type:\n${YELLOW}1${RESET_COLOR}) Live-Action (Non-Anime)\n${YELLOW}2${RESET_COLOR}) Anime"
+    read -p "Enter ${YELLOW}1${RESET_COLOR} or ${YELLOW}2${RESET_COLOR} (default: ${YELLOW}1${RESET_COLOR}): " ctype_choice
+    
+    case "${ctype_choice:-1}" in
+        1) AV1_PARAMS="$AV1_PARAMS_LIVE_ACTION"; CONTENT_TYPE="Live-Action" ;;
+        2) AV1_PARAMS="$AV1_PARAMS_ANIME"; CONTENT_TYPE="Anime" ;;
+        *) AV1_PARAMS="$AV1_PARAMS_LIVE_ACTION"; CONTENT_TYPE="Live-Action"; log "WARN" "Invalid choice. Defaulting to Live-Action." ;;
+    esac
+
+    # File type
+    read -erp "Enter the file type to search (default: \"${YELLOW}${DEFAULT_FILE_TYPE}${RESET_COLOR}\"): " FILE_TYPE
+    FILE_TYPE="${FILE_TYPE:-$DEFAULT_FILE_TYPE}"
+
+    # CRF
+    echo -e "\nIn AV1 encoding, a lower CRF (Constant Rate Factor) means higher quality and a larger file size."
+    echo -e " - CRF ${YELLOW}20–23${RESET_COLOR} is generally considered visually lossless."
+    echo -e " - CRF ${YELLOW}24–28${RESET_COLOR} typically offers high-quality results with better compression."
+    read -erp "Enter the CRF value (${YELLOW}0-63${RESET_COLOR}) (default: ${YELLOW}${DEFAULT_CRF}${RESET_COLOR}): " CRF_VALUE
+    CRF_VALUE="${CRF_VALUE:-$DEFAULT_CRF}"
+    
+    if ! [[ "$CRF_VALUE" =~ ^[0-9]+$ ]] || (( CRF_VALUE < 0 || CRF_VALUE > 63 )); then 
+        log "ERROR" "Invalid CRF value. Must be an integer (0-63)."; exit 1;
+    fi
+
+    echo -e "\nIn AV1 encoding, a lower preset is slower but provides better quality/compression."
+    echo -e " - Preset ${YELLOW}0-2${RESET_COLOR}: Highest quality/compression, very slow."
+    echo -e " - Preset ${YELLOW}3-5${RESET_COLOR}: Excellent quality, balances speed and size."
+    read -erp "Enter the FFmpeg preset (${YELLOW}0-12${RESET_COLOR}) (default: ${YELLOW}${DEFAULT_PRESET}${RESET_COLOR}): " PRESET_VALUE
+    PRESET_VALUE="${PRESET_VALUE:-$DEFAULT_PRESET}"
+    
+    if ! [[ "$PRESET_VALUE" =~ ^[0-9]+$ ]] || (( PRESET_VALUE < 0 || PRESET_VALUE > 12 )); then
+        log "ERROR" "Invalid preset value. Must be an integer (0-12)."; exit 1;
+    fi
+
+    # Fixing (remux) the video file if any error is detected in the verification
+    read -erp "Verify and fix videos before encoding? (${YELLOW}y${RESET_COLOR}/${YELLOW}n${RESET_COLOR}) (default: ${YELLOW}${DEFAULT_VERIFY_FIX_VIDEOS}${RESET_COLOR}): " VALIDATE_FIX_VIDEOS
+    VALIDATE_FIX_VIDEOS="${VALIDATE_FIX_VIDEOS:-$DEFAULT_VERIFY_FIX_VIDEOS}"
+}
+
+# This function encapsulates all the logic for processing a single video file.
+process_file() {
+    local file="$1"
+    local filename
+    filename=$(basename -- "$file")
+    # A blank line on the console helps separate processing blocks for different files.
+    echo
+    log "INFO" "${GREEN}Processing file${RESET_COLOR}: \"${YELLOW}${file}${RESET_COLOR}\""
+
+    # Determine Output Filename
+    local filename_no_ext="${filename%.*}"
+    local output_filename_no_ext
+
+    # turns on case-insensitive matching for the shell
+    shopt -s nocasematch
+
+    # Replacing encoding values by AV1
+    if [[ "$filename_no_ext" =~ (x264|h264|x265|h265|hevc) ]]; then
+        output_filename_no_ext="${filename_no_ext/${BASH_REMATCH[0]}/AV1}"
+    else
+        output_filename_no_ext="${filename_no_ext}_AV1"
+    fi
+
+    # Turn off case-insensitive matching to restore normal shell behavior
+    shopt -u nocasematch
+    
+    local output_path="$DST_LOCATION/${output_filename_no_ext}.mkv"
+
+    # Check if the destination file already exists
+    if [[ -f "$output_path" ]]; then
+        log "WARN" "${YELLOW}$output_path${RESET_COLOR} already exists. Skipping."
+        UNPROCESSED_FILES+=("$output_path")
+        return 0
+    fi
+
+    # Verify and Fix Video (replace the source file if the fix was successful)
+    if [[ "$VALIDATE_FIX_VIDEOS" =~ ^[yY]$ ]]; then
+        log "INFO" "Verifying video \"${YELLOW}${file}${RESET_COLOR}\" for errors..."
+        local error_output
+        error_output=$(ffmpeg -nostdin -v error -i "$file" -f null - 2>&1)
+        
+        if [[ -n "$error_output" ]]; then
+            log "WARN" "${RED}Errors${RESET_COLOR} detected. Attempting to remux \"${YELLOW}${file}${RESET_COLOR}\"..."
+	    
+            # Log the primary event, then loop through the detailed error lines.
+            log "ERROR" "FFmpeg validation failed with the following output:$error_output"
+            
+            local fixed_file
+            fixed_file="$(dirname -- "$file")/${filename_no_ext}.fixed.mkv"
+            
+            if run_command ffmpeg -nostdin -i "$file" -c copy -map 0 -fflags +genpts "$fixed_file"; then
+                log "INFO" "Fix ${GREEN}successful${RESET_COLOR}. Replacing original source file with the fixed version."
+                mv -f "$fixed_file" "$file"
+            else
+                log "ERROR" "Fix failed. The original file will be used for encoding, but it may fail."
+                rm -f "$fixed_file"
+            fi
+        else
+            log "INFO" "No errors detected in the container."
+        fi
+    fi
+
+    # Run Encoding Command
+    local cmd=(
+        ffmpeg -nostdin -i "$file" 
+        -map 0:v -map 0:a -map 0:s?
+        -c:v "$CODEC" -pix_fmt yuv420p10le
+        -crf "$CRF_VALUE" -preset "$PRESET_VALUE"
+        -svtav1-params "$AV1_PARAMS"
+        -c:a copy -c:s copy
+        -movflags +faststart "$output_path"
+    )
+    
+    if ! run_command "${cmd[@]}"; then
+        log "ERROR" "FFmpeg encoding FAILED for \"${YELLOW}${file}${RESET_COLOR}\". Deleting incomplete output file."
+        rm -f "$output_path"
         return 1
     fi
 
-    # Provide smart defaults based on height
-    case "$color_type" in
-        color_range)
-            echo "tv" ;;  # Typically tv (limited) for most content
-        color_space)
-            if (( height >= 2160 )); then
-                echo "bt2020nc"
-            elif (( height >= 720 )); then
-                echo "bt709"
-            else
-                echo "smpte170m"
-            fi
-            ;;
-        color_transfer)
-            if (( height >= 2160 )); then
-                echo "smpte2084"  # HDR10/PQ
-            else
-                echo "bt709"
-            fi
-            ;;
-        color_primaries)
-            if (( height >= 2160 )); then
-                echo "bt2020"
-            elif (( height >= 720 )); then
-                echo "bt709"
-            else
-                echo "smpte170m"
-            fi
-            ;;
-        *)
-            echo "Error: Unknown color_type specified: $color_type" >&2
-            return 1
-            ;;
-    esac
+    log "INFO" "${GREEN}Successfully${RESET_COLOR} encoded: \"${YELLOW}${output_path}${RESET_COLOR}\""
+    return 0
 }
 
 
-set_gop_value(){
-    local metadata="$1"
-    local gop="240"
-    local fps_raw=""
-    local fps_numerator
-    local fps_denominator
-    local fps_calculated
+#################################
+# SCRIPT INITIALIZATION AND MAIN
+#################################
 
-    fps_raw=$(get_value "$metadata" "r_frame_rate" "=")
-    
-    if [[ -z "$fps_raw" || "$fps_raw" == "0/0" || "$fps_raw" == "N/A" || "$fps_raw" == "unknown" ]]; then
-        fps_raw=$(get_value "$metadata" "avg_frame_rate" "=")
-    fi
-
-    # Try to parse FPS like "24000/1001" or "25/1" or "30"
-    if [[ "$fps_raw" =~ ^([0-9]+)/([1-9][0-9]*)$ ]]; then
-        fps_numerator="${BASH_REMATCH[1]}"
-        fps_denominator="${BASH_REMATCH[2]}"
-        fps_calculated=$(echo "scale=4; $fps_numerator / $fps_denominator" | bc -l)
-    elif [[ "$fps_raw" =~ ^[0-9]+(\.[0-9]+)?$ && "$fps_raw" != "0" ]]; then # Handles integer or decimal FPS
-        fps_calculated="$fps_raw"
-    else
-        # Could not determine valid FPS from metadata. Using default
-        fps_calculated="" # Explicitly clear
-    fi
-
-    if [[ -n "$fps_calculated" ]]; then
-        # Ensure fps_calculated is a positive number before using in bc
-        if (( $(echo "$fps_calculated > 0" | bc -l) )); then
-            gop=$(printf "%.0f" "$(echo "$fps_calculated * 10" | bc -l)")
+# This is the main execution block of the script.
+main() {
+    # Verify Log File
+    if [[ "$LOGGING_ENABLED" == "true" ]]; then
+        mkdir -p "$(dirname "$LOG_FILE_PATH")" && touch "$LOG_FILE_PATH"
+	
+        if [[ ! -w "$LOG_FILE_PATH" ]]; then
+            echo -e "${RED}ERROR${RESET_COLOR}: Log file at \"${YELLOW}${LOG_FILE_PATH}${RESET_COLOR}\" is not writable."
+            local choice
+            read -p "Write \"q\" to quit, or press [Enter] to continue without file logging: " choice
+	    
+            if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
+                echo "Quitting script."
+                exit 0
+            fi
+	    
+            LOGGING_ENABLED=false
+            echo -e "${YELLOW}File logging has been disabled for this session.${RESET_COLOR}"
         fi
     fi
-    
-    echo "$gop"
-}
 
+    log "INFO" "FFmpeg AV1 Encoding Script started."
 
-###############
-# MAIN SCRIPT #
-###############
+    # Get User Settings
+    get_user_settings
 
-echo -e "Scanning directory: ${YELLOW}\"$SRC_LOCATION\"${RESET_COLOR} for files of type: ${YELLOW}\"$FILE_TYPE\"${RESET_COLOR}"
+    # Log the final configuration for this run
+    # Decorative banners are printed to the console only using `echo`.
+    # The actual configuration items are logged using the `log` function.
+    echo -e "\n${YELLOW}==================================================${RESET_COLOR}"
+    log "DEBUG" "Batch starting with the following configuration:"
+    log "DEBUG" "  Source Location: ${YELLOW}$SRC_LOCATION${RESET_COLOR}"
+    log "DEBUG" "  Destination Location: ${YELLOW}$DST_LOCATION${RESET_COLOR}"
+    log "DEBUG" "  File Type: ${YELLOW}$FILE_TYPE${RESET_COLOR}"
+    log "DEBUG" "  Content Type: ${YELLOW}$CONTENT_TYPE${RESET_COLOR}"
+    log "DEBUG" "  CRF: ${YELLOW}$CRF_VALUE${RESET_COLOR}"
+    log "DEBUG" "  Preset: ${YELLOW}$PRESET_VALUE${RESET_COLOR}"
+    log "DEBUG" "  AV1 Parameters: ${YELLOW}$AV1_PARAMS${RESET_COLOR}"
+    log "DEBUG" "  Verify/Fix Videos: ${YELLOW}$VALIDATE_FIX_VIDEOS${RESET_COLOR}"
+    echo -e "${YELLOW}==================================================${RESET_COLOR}"
 
-find "$SRC_LOCATION" -type f -name "*.$FILE_TYPE" -print0 | sort -z | while IFS= read -r -d $'\0' file; do
-    file_found=true 
-    echo "Found file: \"$file\""
-    
-    # Initializing the variables
-    # Extract filename and modify it
-    filename="$(basename -- "$file")"
-    filename_no_ext="${filename%.*}"
-    output_filename=""
-    output_path=""
-    color_primaries_value=""
-    color_range_value=""
-    color_space_value=""
-    color_trc_value=""
-    gop_value=""
+    # Ensure the destination directory exists before we start processing.
+    mkdir -p "$DST_LOCATION"
 
-    # For debugging
-    #echo "Filename extracted: \"$filename\""
-    #echo "Filename without extension: \"$filename_no_ext\""
-    
-    #------------------------
-    # Get the output_filename
-    #------------------------
-    codec_in_filename=$(echo "$filename" | grep -Po "[xXhH][\.-_]?26[45]|HEVC|hevc")
-    if [ -n "$codec_in_filename" ]; then
-        output_filename=$(echo "$filename_no_ext" | sed "s/$codec_in_filename/AV1/I").mkv
-    else
-        # Extract the part containing the resolution (e.g., ".1080p." or "[1080p]")
-        tmp=$(echo "$filename_no_ext" | grep -Po ".\d+p.")
-        
-        # Get the first and last characters surrounding the resolution
-        if [[ -n "$tmp" ]]; then
-            tmp_first_char="${tmp:0:1}"  # First character
-            tmp_last_char="${tmp: -1}"   # Last character
-        
-            if [ "$tmp_first_char" == "." ] || [ "$tmp_first_char" == " " ]; then
-                output_filename="${filename_no_ext}${tmp_first_char}AV1.mkv"
-            else
-                output_filename="${filename_no_ext}${tmp_first_char}AV1${tmp_last_char}.mkv"
-            fi
+    # Find and Process Files
+    local files=()
+    mapfile -d '' files < <(find "$SRC_LOCATION" -type f -name "*.$FILE_TYPE" -print0 | sort -z)
+
+    if (( ${#files[@]} == 0 )); then
+        log "WARN" "No files of type \"${YELLOW}${FILE_TYPE}${RESET_COLOR}\" found in directory: \"${YELLOW}${SRC_LOCATION}${RESET_COLOR}\"."
+        exit 1
+    fi
+
+    log "INFO" "Found ${#files[@]} file(s) to process."
+    local success_count=0
+    local failure_count=0
+
+    for file in "${files[@]}"; do
+        if process_file "$file"; then
+            ((success_count++))
         else
-            output_filename="${filename_no_ext}_AV1.mkv"
+            ((failure_count++))
+            log "ERROR" "A critical error occurred while processing \"${YELLOW}${file}${RESET_COLOR}\". The script will continue with the next file."
         fi
-    fi
-    
-    # Get the full output path and make sure the directory exists
-    output_path="$DST_LOCATION/$output_filename"
-    
-    #---------------------------------------
-    # Verifying the video for potential fixes
-    #---------------------------------------
-    # Skipping file if the output already exists, otherwise, compress it accordingly
-    if [[ -f "$output_path" ]]; then
-        echo -e "${YELLOW}$output_path${RESET_COLOR} already exists. Skipping this file."
-        UNPROCESSED_FILES+=("$output_path")
-    else
-        # Fixing the video to correct issues and replacing the original with fixed one
-        if echo "$VALIDATE_FIX_VIDEOS" | grep -Piq "^y"; then
-            # Check if any errors are detected in the video
-            echo "Verifying the file..."
-            CMD=(ffmpeg -nostdin -v error -i "$file" -f null -)
-            echo -e "${YELLOW}Executing command${RESET_COLOR}: ${CMD[@]} 2>&1"
-            error_output=$("${CMD[@]}" 2>&1)
-            
-            if [[ -n "$error_output" ]]; then
-                echo -e "${YELLOW}Performing fix${RESET_COLOR} on '$filename' to ensure proper timestamps and format..."
-                
-                # Showing the error(s) detected
-                echo -e "${RED}====================${RESET_COLOR}"
-                echo -e "${RED}Error(s) found in file${RESET_COLOR}: ${YELLOW}$file${RESET_COLOR}\n$error_output"
-                echo -e "${RED}====================${RESET_COLOR}"
-                
-                # Define the new filename (keeping it in the same directory)
-                fixed_file="$(dirname -- "$file")/${filename_no_ext}.fixed.mkv"
-                
-                # Command to process the file
-                CMD=(ffmpeg -nostdin -i "$file" -c copy -map 0 -fflags +genpts "$fixed_file")
-                
-                # Check if ffmpeg succeeded
-                if run_command "${CMD[@]}"; then
-                    mv -f "$fixed_file" "$file"
-                    echo -e "Fix ${GREEN}successful${RESET_COLOR}! The original file was replaced with the fixed file."
-                else
-                    echo -e "${RED}Error${RESET_COLOR}: Fix ${RED}failed${RESET_COLOR}. Keeping the original file."
-		            # Deleting fixed file in case it is present
-		            rm -f "$fixed_file"
-                fi
-            else
-                echo -e "No ${RED}error${RESET_COLOR} detected. Proceeding with encoding."
-            fi
-        fi
-    
-        #---------------------------------
-        # Setting some encoding parameters
-        #---------------------------------
-        ffprobe_metadata=$(ffprobe -v error -select_streams v:0 -show_entries stream=color_space,color_primaries,color_transfer,color_range,height,r_frame_rate,avg_frame_rate -of default=noprint_wrappers=1 "$file")
-        color_primaries_value=$(set_color_value "$ffprobe_metadata" "color_primaries") || {
-            echo -e "${RED}ERROR${RESET_COLOR}: Main script failed at setting color primaries." >&2
-            exit 1
-        }
-        color_range_value=$(set_color_value "$ffprobe_metadata" "color_range") || {
-            echo -e "${RED}ERROR${RESET_COLOR}: Main script failed at setting color range." >&2
-            exit 1
-        }
-        color_space_value=$(set_color_value "$ffprobe_metadata" "color_space") || {
-            echo -e "${RED}ERROR${RESET_COLOR}: Main script failed at setting color space." >&2
-            exit 1
-        }
-        color_trc_value=$(set_color_value "$ffprobe_metadata" "color_transfer") || {
-            echo -e "${RED}ERROR${RESET_COLOR}: Main script failed at setting color transfer (trc)." >&2
-            exit 1 
-        }
-        gop_value=$(set_gop_value "$ffprobe_metadata") || {
-            echo -e "${RED}ERROR${RESET_COLOR}: Main script failed at setting GOP value." >&2
-            exit 1
-        }
-        
-        #----------------------------
-	# Command to process the file
-        #----------------------------
-        CMD=(ffmpeg -nostdin -i "$file" -map 0:v -map 0:a -c:v $CODEC -pix_fmt yuv420p10le -colorspace "$color_space_value" -color_primaries "$color_primaries_value" -color_trc "$color_trc_value" -color_range "$color_range_value" -crf $CRF_VALUE -preset $PRESET_VALUE -g "$gop_value" -svtav1-params "$AV1_PARAMS" -c:a copy -map 0:s? -c:s copy -movflags +faststart "$output_path")
-        run_command "${CMD[@]}"
-    fi
-done
-
-if [[ $file_found == false ]]; then
-    echo -e "No files of type '${YELLOW}$FILE_TYPE${RESET_COLOR}' found in directory: \"${YELLOW}$SRC_LOCATION${RESET_COLOR}\"."
-    exit 1
-fi
-
-#---------------------------------------
-# Printing files that were not processed
-#---------------------------------------
-# Check if the array is not empty and loop through the files
-if [ ${#UNPROCESSED_FILES[@]} -ne 0 ]; then
-    
-    if [ ${#UNPROCESSED_FILES[@]} -eq 1 ]; then
-        echo -e "\nThe following file was not processed:"
-    else
-        echo -e "\nThe following files were not processed:"
-    fi
-
-    for unprocessed_file in "${UNPROCESSED_FILES[@]}"; do
-        echo -e "- ${YELLOW}${unprocessed_file}${RESET_COLOR}"
     done
-fi
+
+    # Final Report
+    echo -e "\n${YELLOW}==================================================${RESET_COLOR}"
+    log "INFO" "FFmpeg AV1 Encoding Script completed."
+    echo -e "${YELLOW}==================================================${RESET_COLOR}"
+    
+    log "INFO" "Successfully processed: ${GREEN}$success_count${RESET_COLOR} file(s)."
+    log "INFO" "Failed to process: ${RED}$failure_count${RESET_COLOR} file(s)."
+
+    if (( ${#UNPROCESSED_FILES[@]} > 0 )); then
+        echo -e "The following files were skipped (destination already existed):"
+	
+        # The log function will handle this multi-line message correctly.
+        printf ' - %s\n' "${UNPROCESSED_FILES[@]}" | while IFS= read -r line; do echo -e "$line"; done
+    fi
+}
+
+# This construct ensures that the script's execution begins at the `main` function.
+main "$@"
