@@ -16,7 +16,6 @@
 LOGGING_ENABLED=true
 
 # The full path to the log file. The script will attempt to create the directory if it doesn't exist.
-# Command to read the errors: awk '/^\[.*\]\[ERROR\]/ {p=1} /^\[/ && !/\[ERROR\]/ {p=0} p' /var/log/ffmpeg-av1-encode.log
 readonly LOG_FILE_PATH="/var/log/ffmpeg-av1-encode.log"
 
 # Set the desired logging verbosity. Messages with a level equal to or higher than this will be logged.
@@ -112,6 +111,16 @@ log() {
     # Define the uncolored prefix. This is used for indentation calculation and for the log file.
     local uncolored_prefix="[${timestamp}] [${level_name}]"
     
+    # Handle file logging first, creating a single, clean line.
+    if [[ "$LOGGING_ENABLED" == "true" ]]; then
+        # Strip ANSI color codes from the entire message and replace all newline characters with a separator (e.g., " | ") to form a single line.
+        local file_message
+        file_message=$(echo "$message" | sed 's/\x1B\[[0-9;]*[mG]//g' | tr '\n' ' | ')
+
+        # Write the single, clean line to the log file.
+        echo "${uncolored_prefix} ${file_message}" >> "$LOG_FILE_PATH"
+    fi
+    
     # Get the appropriate color for the level name. Default to RESET_COLOR if not found.
     local level_color=${LOG_LEVEL_COLORS[$level_name]:-${RESET_COLOR}}
 
@@ -121,7 +130,7 @@ log() {
     # Use a flag to track if we're on the first line of a multi-line message.
     local first_line=true
     
-    # Process each line of the message separately to handle multi-line input correctly.
+    # Process each line of the message for multi-line console output.
     while IFS= read -r line; do
         # Skip processing any empty lines that might be in the source message.
         [[ -n "$line" ]] || continue
@@ -129,25 +138,10 @@ log() {
         if "$first_line"; then
             # Construct the colored output for the console.
             echo -e "[${timestamp}] [${level_color}${level_name}${RESET_COLOR}] ${line}${RESET_COLOR}"
-	    
-            if [[ "$LOGGING_ENABLED" == "true" ]]; then
-                # Strip any potential colors from the message line for the log file.
-                local clean_line; clean_line=$(echo "$line" | sed 's/\x1B\[[0-9;]*[mG]//g')
-                
-		# Use the uncolored_prefix for the file log.
-                echo "${uncolored_prefix} ${clean_line}" >> "$LOG_FILE_PATH"
-            fi
-	    
             first_line=false
         else
             # All subsequent lines of the same message are indented for readability.
             echo -e "${indent}   ${line}${RESET_COLOR}"
-	    
-            if [[ "$LOGGING_ENABLED" == "true" ]]; then
-                local clean_line; clean_line=$(echo "$line" | sed 's/\x1B\[[0-9;]*[mG]//g')
-                # The indentation is also written to the log file.
-                echo "${indent}   ${clean_line}" >> "$LOG_FILE_PATH"
-            fi
         fi
     done <<< "$message"
 }
