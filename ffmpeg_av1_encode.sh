@@ -74,10 +74,32 @@ readonly AV1_PARAMS_LIVE_ACTION="tune=0:enable-overlays=1:scd=1:scm=0:film-grain
 readonly AV1_PARAMS_ANIME="tune=1:enable-overlays=1:scd=1:scm=0:film-grain=0:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
 
 # Maps log level names to numerical values for easy comparison.
-readonly declare -A LOG_LEVELS=([DEBUG]=0 [INFO]=1 [WARN]=2 [ERROR]=3)
+declare -A LOG_LEVELS
+
+# Assign values to the log levels
+LOG_LEVELS=(
+    [DEBUG]=0
+    [INFO]=1
+    [WARN]=2
+    [ERROR]=3
+)
+
+# Set the variable as read only
+readonly LOG_LEVELS
 
 # Associative array mapping log levels to their colors.
-readonly declare -A LOG_LEVEL_COLORS=(["DEBUG"]="$CYAN" ["INFO"]="$BLUE" ["WARN"]="$YELLOW" ["ERROR"]="$RED")
+declare -A LOG_LEVEL_COLORS
+
+# Assign colors to the log levels
+LOG_LEVEL_COLORS=(
+    ["DEBUG"]="$CYAN"
+    ["INFO"]="$BLUE"
+    ["WARN"]="$YELLOW"
+    ["ERROR"]="$RED"
+)
+
+# Set the variable as read only
+readonly LOG_LEVEL_COLORS
 
 # Global variables that will be populated by user input.
 SRC_LOCATION=""
