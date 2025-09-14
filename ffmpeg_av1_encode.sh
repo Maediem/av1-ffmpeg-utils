@@ -32,7 +32,8 @@ readonly DEFAULT_CRF=23
 readonly DEFAULT_PRESET=3
 readonly DEFAULT_VERIFY_FIX_VIDEOS="y"
 readonly DEFAULT_AUDIO_MODE="opus"
-
+readonly DEFAULT_KBPS_BITRATE=192 # High quality target for stereo
+readonly DEFAULT_AUDIO_KBPS_PER_CHANNEL=64 # High quality overall. 8 channels = 512 kbps
 
 ############################
 # CORE SCRIPT DEPENDENCIES #
@@ -74,32 +75,10 @@ readonly AV1_PARAMS_LIVE_ACTION="tune=0:enable-overlays=1:scd=1:scm=0:film-grain
 readonly AV1_PARAMS_ANIME="tune=1:enable-overlays=1:scd=1:scm=0:film-grain=0:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
 
 # Maps log level names to numerical values for easy comparison.
-declare -A LOG_LEVELS
-
-# Assign values to the log levels
-LOG_LEVELS=(
-    [DEBUG]=0
-    [INFO]=1
-    [WARN]=2
-    [ERROR]=3
-)
-
-# Set the variable as read only
-readonly LOG_LEVELS
+readonly declare -A LOG_LEVELS=([DEBUG]=0 [INFO]=1 [WARN]=2 [ERROR]=3)
 
 # Associative array mapping log levels to their colors.
-declare -A LOG_LEVEL_COLORS
-
-# Assign colors to the log levels
-LOG_LEVEL_COLORS=(
-    ["DEBUG"]="$CYAN"
-    ["INFO"]="$BLUE"
-    ["WARN"]="$YELLOW"
-    ["ERROR"]="$RED"
-)
-
-# Set the variable as read only
-readonly LOG_LEVEL_COLORS
+readonly declare -A LOG_LEVEL_COLORS=(["DEBUG"]="$CYAN" ["INFO"]="$BLUE" ["WARN"]="$YELLOW" ["ERROR"]="$RED")
 
 # Global variables that will be populated by user input.
 SRC_LOCATION=""
@@ -372,7 +351,7 @@ set_gop_value(){
 
 set_audio_value(){
     local metadata="$1"
-    local codec channels bit_rate target_bitrate
+    local codec channels channel_layout bit_rate target_bitrate
 
     # If meta data is empty, copy the audio
     if [[ -z "$metadata" ]]; then
@@ -392,16 +371,20 @@ set_audio_value(){
     # Get the channel data and default to 2 (stereo) if missing
     channels=$(get_value "$metadata" "channels" "=")
     channels=${channels:-2}    
-
+    
     if (( channels > 2)); then
-        target_bitrate=$(( channels * 80)) # High quality target: 80kbps per channel
+        target_bitrate=$(( channels * DEFAULT_AUDIO_KBPS_PER_CHANNEL)) 
+        
+        if (( target_bitrate < DEFAULT_KBPS_BITRATE )); then
+            target_bitrate=$DEFAULT_KBPS_BITRATE
+        fi
     else
-        target_bitrate=256 # Excellent/transparent target for stereo
+        target_bitrate=$DEFAULT_KBPS_BITRATE
     fi
 
     # Sanity check: Don't exceed source bitrate if source is lossy/low
     bit_rate=$(get_value "$metadata" "bit_rate" "=")
-    if [[ -n "$bit_rate" ]]; then
+    if [[ -n "$bit_rate" ]] && [[ "$bit_rate" =~ ^[0-9]+$ ]]; then
         bit_rate=$(( bit_rate / 1000))
         if (( bit_rate > 0 && target_bitrate > bit_rate )); then
             target_bitrate=$bit_rate
@@ -411,15 +394,37 @@ set_audio_value(){
     echo "libopus"
     echo "-b:a"
     echo "${target_bitrate}k"
+    echo "-channel_layout"
+    
+    # --- AUTOMATIC CHANNEL LAYOUT with FALLBACK ---
+    channel_layout=$(get_value "$metadata" "channel_layout" "=")
+    
+    # Normalize channel layout (e.g. 5.1(side) to 5.1)
+    channel_layout="${channel_layout%%(*}"    
 
-    # If we have 6 channels (5.1), add the required channel layout flag.
-    if (( channels == 6 )); then
-        echo "-channel_layout"
-        echo "5.1"
-    # Also handle 8 channels (7.1) proactively
-    elif (( channels == 8 )); then
-        echo "-channel_layout"
-        echo "7.1"
+    if [[ -n "$channel_layout" && "$channel_layout" != "unknown" ]]; then
+        echo "$channel_layout"
+
+    # Fall back to guessing based on channel count.
+    else
+        case "$channels" in
+            1)
+                echo "mono"
+                ;;
+            2)
+                echo "stereo"
+                ;;
+            6)
+                echo "5.1"
+                ;;
+            8)
+                echo "7.1"
+                ;;
+            *)
+                log "ERROR" "Unsupported channel count: $channels"
+                return 1
+                ;;
+        esac
     fi
 }
 
@@ -527,7 +532,7 @@ process_file() {
     
     # If not copy, get audio metadata for compressing
     if [[ "$AUDIO_MODE" == "$DEFAULT_AUDIO_MODE" ]]; then
-        ffprobe_audio_metadata=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,channels,bit_rate -of default=noprint_wrappers=1 "$file")
+        ffprobe_audio_metadata=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,channels,channel_layout,bit_rate -of default=noprint_wrappers=1 "$file")
         
         mapfile -t audio_params < <(set_audio_value "$ffprobe_audio_metadata") || {
             log "ERROR" "Failed to set the audio parameters for \"${YELLOW}${file}${RESET_COLOR}\". Skipping file."
