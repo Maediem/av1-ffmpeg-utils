@@ -39,23 +39,25 @@ readonly DEFAULT_AUDIO_KBPS_PER_CHANNEL=64 # High quality overall. 8 channels = 
 # CORE SCRIPT DEPENDENCIES #
 ############################
 
-# Enable extended command-line editing features (like history search) for the `read` command.
-set -o emacs
-
-# Configure key bindings for a better interactive experience.
-bind 'set show-all-if-ambiguous on' # Show possible completions on the first Tab press.
-bind '"\e[A": history-search-backward' # Up arrow searches history based on current input.
-bind '"\e[B": history-search-forward'  # Down arrow does the same.
-
 # This function provides path completion logic for commands that use it (like our `read` prompts).
 _path_completion() {
     local current_word="${COMP_WORDS[COMP_CWORD]}"
     COMPREPLY=($(compgen -f -- "$current_word"))
 }
 
-# Register the `_path_completion` function to be triggered for the `read` command with path prompting.
-complete -o nospace -F _path_completion read
+# For interactive terminal
+if [[ -t 0 ]]; then
+    # Enable extended command-line editing features (like history search) for the `read` command.
+    set -o emacs
 
+    # Configure key bindings for a better interactive experience.
+    bind 'set show-all-if-ambiguous on' # Show possible completions on the first Tab press.
+    bind '"\e[A": history-search-backward' # Up arrow searches history based on current input.
+    bind '"\e[B": history-search-forward' # Down arrow does the same.
+
+    # Register the `_path_completion` function to be triggered for the `read` command with path prompting.
+    complete -o nospace -F _path_completion read
+fi
 
 #############
 # VARIABLES #
@@ -71,8 +73,8 @@ readonly RESET_COLOR=$(tput sgr0)
 
 # Pre-defined parameter sets for the SVT-AV1 encoder, optimized for different content types.
 readonly CODEC="libsvtav1"
-readonly AV1_PARAMS_LIVE_ACTION="tune=0:enable-overlays=1:scd=1:scm=0:film-grain=1:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
-readonly AV1_PARAMS_ANIME="tune=1:enable-overlays=1:scd=1:scm=0:film-grain=0:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
+readonly AV1_PARAMS_LIVE_ACTION="tune=0:enable-overlays=1:scd=1:scm=0:film-grain=4:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
+readonly AV1_PARAMS_ANIME="tune=0:enable-overlays=1:scd=1:scm=0:film-grain=2:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
 
 # Maps log level names to numerical values for easy comparison.
 readonly declare -A LOG_LEVELS=([DEBUG]=0 [INFO]=1 [WARN]=2 [ERROR]=3)
@@ -92,6 +94,11 @@ CONTENT_TYPE=""
 UNPROCESSED_FILES=()
 AUDIO_MODE=""
 
+########
+# TRAP #
+########
+# Catch Ctrl+C (SIGINT) and exit the script instead of killing the current ffmpeg process
+trap 'echo -e "\n${RED}[ERROR] Script interrupted by user. Exiting.${RESET_COLOR}"; exit 130' SIGINT SIGTERM
 
 #############
 # FUNCTIONS #
@@ -181,9 +188,13 @@ get_user_settings() {
     read -erp "Enter the destination location (default: \"${YELLOW}${DEFAULT_DST_LOCATION}${RESET_COLOR}\"): " DST_LOCATION
     DST_LOCATION="${DST_LOCATION:-$DEFAULT_DST_LOCATION}"
 
-    if [[ -d "$DST_LOCATION" && ! -w "$DST_LOCATION" ]] || \
-       [[ ! -d "$DST_LOCATION" && ! -w "$(dirname "$DST_LOCATION")" ]]; then
+    if [[ -d "$DST_LOCATION" && ! -w "$DST_LOCATION" ]] || [[ ! -d "$DST_LOCATION" && ! -w "$(dirname "$DST_LOCATION")" ]]; then
         log "ERROR" "Destination location \"${YELLOW}${DST_LOCATION}${RESET_COLOR}\" is not writable."
+        exit 1
+    fi
+
+    if [[ "$(realpath "$SRC_LOCATION")" == "$(realpath "$DST_LOCATION")" ]]; then
+        log "ERROR" "Source and destination location cannot be the same."
         exit 1
     fi
 
@@ -205,7 +216,7 @@ get_user_settings() {
 
     # CRF
     echo -e "\nIn AV1 encoding, a lower CRF (Constant Rate Factor) means higher quality and a larger file size."
-    echo -e " - CRF ${YELLOW}20–23${RESET_COLOR} is generally considered visually lossless."
+    echo -e " - CRF ${YELLOW}20–23${RESET_COLOR} is generally considered very high quality."
     echo -e " - CRF ${YELLOW}24–28${RESET_COLOR} typically offers high-quality results with better compression."
     read -erp "Enter the CRF value (${YELLOW}0-63${RESET_COLOR}) (default: ${YELLOW}${DEFAULT_CRF}${RESET_COLOR}): " CRF_VALUE
     CRF_VALUE="${CRF_VALUE:-$DEFAULT_CRF}"
@@ -257,59 +268,12 @@ set_color_value(){
     local value
     value=$(get_value "$metadata" "$color_type" "=")
 
-    # If it's not unknown or N/A, return it as-is
-    if [[ "$value" != "unknown" && "$value" != "N/A" && -n "$value" ]]; then
+    # Return empty string if value is not provided
+    if [[ "$value" == "unknown" || "$value" == "N/A" || -z "$value" ]]; then
+        echo ""
+    else
         echo "$value"
-        return 0
     fi
-
-    # Get height to determine fallback
-    local height
-
-    height=$(get_value "$metadata" "height" "=")
-    if ! [[ "$height" =~ ^[0-9]+$ ]]; then
-        log "ERROR" "Could not determine a valid video height from metadata. Height reported as: '$height'"
-        return 1
-    fi
-
-    # Provide smart defaults based on height
-    case "$color_type" in
-        color_range)
-            echo "tv" ;;  # Typically tv (limited) for most content
-
-        color_space)
-            if (( height >= 2160 )); then
-                echo "bt2020nc"
-            elif (( height >= 720 )); then
-                echo "bt709"
-            else
-                echo "smpte170m"
-            fi
-            ;;
-
-        color_transfer)
-            if (( height >= 2160 )); then
-                echo "smpte2084"  # HDR10/PQ
-            else
-                echo "bt709"
-            fi
-            ;;
-
-        color_primaries)
-            if (( height >= 2160 )); then
-                echo "bt2020"
-            elif (( height >= 720 )); then
-                echo "bt709"
-            else
-                echo "smpte170m"
-            fi
-            ;;
-
-        *)
-            log "ERROR" "Unknown color_type specified in script logic: $color_type"
-            return 1
-            ;;
-    esac
 }
 
 set_gop_value(){
@@ -344,6 +308,9 @@ set_gop_value(){
         if (( $(echo "$fps_calculated > 0" | bc -l) )); then
             # Calculate GOP as 10 seconds worth of frames
             gop=$(printf "%.0f" "$(echo "$fps_calculated * 10" | bc -l)")
+
+            # Prevent excessively large GOP values (e.g. 120 fps)
+            (( gop > 600 )) && gop=600
         fi
     fi
     echo "$gop"
@@ -391,7 +358,12 @@ set_audio_value(){
         fi
     fi
 
-    echo "libopus"
+    if [[ "$DEFAULT_AUDIO_MODE" == "opus" ]]; then
+        echo "libopus"
+    else
+        echo "$DEFAULT_AUDIO_MODE"
+    fi
+    
     echo "-b:a"
     echo "${target_bitrate}k"
     echo "-channel_layout"
@@ -460,7 +432,7 @@ process_file() {
     if [[ -f "$output_path" ]]; then
         log "WARN" "${YELLOW}$output_path${RESET_COLOR} already exists. Skipping."
         UNPROCESSED_FILES+=("$output_path")
-        return 0
+        return 2
     fi
 
     # Verify and Fix Video (replace the source file if the fix was successful)
@@ -479,8 +451,12 @@ process_file() {
             fixed_file="$(dirname -- "$file")/${filename_no_ext}.fixed.mkv"
 
             if run_command ffmpeg -nostdin -i "$file" -c copy -map 0 -fflags +genpts "$fixed_file"; then
-                log "INFO" "Fix ${GREEN}successful${RESET_COLOR}. Replacing original source file with the fixed version."
-                mv -f "$fixed_file" "$file"
+                if mv -f "$fixed_file" "$file"; then
+                    log "INFO" "Fix ${GREEN}successful${RESET_COLOR}. Replaced original source file with the fixed version."
+                else
+                    log "ERROR" "Fix succeeded, but failed to replace original file. Check folder permissions."
+                    #rm -f "$fixed_file"
+                fi
             else
                 log "ERROR" "Fix failed. The original file will be used for encoding, but it may fail."
                 rm -f "$fixed_file"
@@ -550,10 +526,14 @@ process_file() {
         ffmpeg -nostdin -i "$file"
         -map 0:v -map 0:a -map 0:s?
         -c:v "$CODEC" -pix_fmt yuv420p10le
-        -colorspace "$color_space_value"
-        -color_primaries "$color_primaries_value"
-        -color_trc "$color_trc_value"
-        -color_range "$color_range_value"
+    )
+    
+    [[ -n "$color_space_value" ]] && cmd+=( -colorspace "$color_space_value")
+    [[ -n "$color_primaries_value" ]] && cmd+=( -color_primaries "$color_primaries_value")
+    [[ -n "$color_trc_value" ]] && cmd+=( -color_trc "$color_trc_value")
+    [[ -n "$color_range_value" ]] && cmd+=( -color_range "$color_range_value")
+
+    cmd+=(
         -crf "$CRF_VALUE" -preset "$PRESET_VALUE"
         -g "$gop_value"
         -svtav1-params "$AV1_PARAMS"
@@ -578,16 +558,34 @@ process_file() {
 
 # This is the main execution block of the script.
 main() {
+    # Validate all used command for the script
+    local required_commands=(
+        ffmpeg
+        ffprobe
+        bc
+        grep
+        cut
+        sed
+        tput
+    )
+
+    for cmd in "${required_commands[@]}"; do
+        command -v "$cmd" >/dev/null 2>&1 || {
+            log "ERROR" "Missing required command: $cmd"
+            exit 1
+        }
+    done
+    
     # Verify Log File
     if [[ "$LOGGING_ENABLED" == "true" ]]; then
-        mkdir -p "$(dirname "$LOG_FILE_PATH")" && touch "$LOG_FILE_PATH"
-
-        if [[ ! -w "$LOG_FILE_PATH" ]]; then
+        local choice
+        
+        if ! mkdir -p "$(dirname "$LOG_FILE_PATH")" || ! touch "$LOG_FILE_PATH" || [[ ! -w "$LOG_FILE_PATH" ]]; then
             echo -e "${RED}ERROR${RESET_COLOR}: Log file at \"${YELLOW}${LOG_FILE_PATH}${RESET_COLOR}\" is not writable."
-            local choice
+            
             read -p "Write \"q\" to quit, or press [Enter] to continue without file logging: " choice
 
-            if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
+            if [[ "$choice" =~ ^[Qq]$ ]]; then
                 echo "Quitting script."
                 exit 0
             fi
@@ -616,12 +614,23 @@ main() {
     echo -e "${YELLOW}==================================================${RESET_COLOR}"
 
     # Ensure the destination directory exists before we start processing.
-    mkdir -p "$DST_LOCATION"
+    mkdir -p "$DST_LOCATION" || {
+        log "ERROR" "Unable to create destination directory."
+        exit 1
+    }
+
+    local available_space
+    available_space=$(df -BG "$DST_LOCATION" | awk 'NR==2 {gsub("G","",$4); print $4}')
+
+    if [[ "$available_space" =~ ^[0-9]+$ ]] && (( available_space < 50 )); then
+        log "WARN" "Low free space detected: ${available_space}GB remaining."
+    fi
 
     # Find and Process Files
     local files=()
+    
     # Safely read file paths into an array, even those with special characters
-    mapfile -d '' files < <(find "$SRC_LOCATION" -type f -name "*.$FILE_TYPE" -print0 | sort -z)
+    mapfile -d '' files < <(find "$SRC_LOCATION" -type f -iname "*.$FILE_TYPE" -print0 | sort -z)
 
     if (( ${#files[@]} == 0 )); then
         log "WARN" "No files of type \"${YELLOW}${FILE_TYPE}${RESET_COLOR}\" found in directory: \"${YELLOW}${SRC_LOCATION}${RESET_COLOR}\"."
@@ -631,14 +640,24 @@ main() {
     log "INFO" "Found ${#files[@]} file(s) to process."
     local success_count=0
     local failure_count=0
+    local skipped_count=0
 
     for file in "${files[@]}"; do
-        if process_file "$file"; then
-            ((success_count++))
-        else
-            ((failure_count++))
-            log "ERROR" "A critical error occurred while processing \"${YELLOW}${file}${RESET_COLOR}\". The script will continue with the next file."
-        fi
+        process_file "$file"
+        status=$?
+
+        case "$status" in
+            0)
+                ((success_count++))
+                ;;
+            2)
+                ((skipped_count++))
+                ;;
+            *)
+                ((failure_count++))
+                log "ERROR" "A critical error occurred while processing \"${YELLOW}${file}${RESET_COLOR}\". The script will continue with the next file."
+                ;;
+        esac
     done
 
     # Final Report
@@ -648,6 +667,7 @@ main() {
 
     log "INFO" "Successfully processed: ${GREEN}$success_count${RESET_COLOR} file(s)."
     log "INFO" "Failed to process: ${RED}$failure_count${RESET_COLOR} file(s)."
+    log "INFO" "Skipped: ${RED}$skipped_count${RESET_COLOR} file(s)."
 
     if (( ${#UNPROCESSED_FILES[@]} > 0 )); then
         local skipped_message="The following files were skipped (destination already existed):\n"
