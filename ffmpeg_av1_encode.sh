@@ -17,7 +17,7 @@ LOGGING_ENABLED=true
 
 # The full path to the log file. The script will attempt to create the directory if it doesn't exist.
 # Command to read the errors: awk '/^\[.*\]\[ERROR\]/ {p=1} /^\[/ && !/\[ERROR\]/ {p=0} p' /var/log/ffmpeg-av1-encode.log
-readonly LOG_FILE_PATH="/var/log/ffmpeg-av1-encode.log"
+LOG_FILE_PATH="/var/log/ffmpeg-av1-encode.log"
 
 # Set the desired logging verbosity. Messages with a level equal to or higher than this will be logged.
 # Available levels (from most to least verbose): DEBUG, INFO, WARN, ERROR
@@ -74,7 +74,7 @@ readonly RESET_COLOR=$(tput sgr0)
 # Pre-defined parameter sets for the SVT-AV1 encoder, optimized for different content types.
 readonly CODEC="libsvtav1"
 # Common base settings (Safe for Preset 3, 4, and 5)
-readonly AV1_DEFAULT_PARAMS="tune=0:scd=1:scm=0:aq-mode=2:enable-tf=1:enable-overlays=1:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:film-grain-denoise=0"
+readonly AV1_DEFAULT_PARAMS="tune=0:scd=1:scm=0:aq-mode=2:enable-tf=1:enable-overlays=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:film-grain-denoise=0"
 
 # Specific profiles appending their distinct grain values
 readonly AV1_PARAMS_LIVE_ACTION="${AV1_DEFAULT_PARAMS}:film-grain=4"
@@ -320,32 +320,28 @@ set_gop_value(){
     echo "$gop"
 }
 
+
 set_audio_value(){
     local metadata="$1"
-    local codec channels channel_layout bit_rate target_bitrate
+    local codec channels bit_rate target_bitrate
 
-    # If meta data is empty, copy the audio
     if [[ -z "$metadata" ]]; then
         echo "copy"
         return 0
     fi
     
-    # Get the codec name (e.g. opus, eac3)
     codec=$(get_value "$metadata" "codec_name" "=")
 
-    # If audio is empty or is the same as the default, copy
     if [[ "$codec" == "$DEFAULT_AUDIO_MODE" ]] || [[ -z "$codec" ]]; then
         echo "copy"
         return 0
     fi
     
-    # Get the channel data and default to 2 (stereo) if missing
     channels=$(get_value "$metadata" "channels" "=")
     channels=${channels:-2}    
     
     if (( channels > 2)); then
         target_bitrate=$(( channels * DEFAULT_AUDIO_KBPS_PER_CHANNEL)) 
-        
         if (( target_bitrate < DEFAULT_KBPS_BITRATE )); then
             target_bitrate=$DEFAULT_KBPS_BITRATE
         fi
@@ -353,7 +349,6 @@ set_audio_value(){
         target_bitrate=$DEFAULT_KBPS_BITRATE
     fi
 
-    # Sanity check: Don't exceed source bitrate if source is lossy/low
     bit_rate=$(get_value "$metadata" "bit_rate" "=")
     if [[ -n "$bit_rate" ]] && [[ "$bit_rate" =~ ^[0-9]+$ ]]; then
         bit_rate=$(( bit_rate / 1000))
@@ -364,45 +359,24 @@ set_audio_value(){
 
     if [[ "$DEFAULT_AUDIO_MODE" == "opus" ]]; then
         echo "libopus"
+        echo "-b:a"
+        echo "${target_bitrate}k"
+        echo "-vbr"
+        echo "on"
+        echo "-compression_level"
+        echo "10"
     else
         echo "$DEFAULT_AUDIO_MODE"
+        echo "-b:a"
+        echo "${target_bitrate}k"
     fi
     
     echo "-b:a"
     echo "${target_bitrate}k"
-    echo "-channel_layout"
-    
-    # --- AUTOMATIC CHANNEL LAYOUT with FALLBACK ---
-    channel_layout=$(get_value "$metadata" "channel_layout" "=")
-    
-    # Normalize channel layout (e.g. 5.1(side) to 5.1)
-    channel_layout="${channel_layout%%(*}"    
-
-    if [[ -n "$channel_layout" && "$channel_layout" != "unknown" ]]; then
-        echo "$channel_layout"
-
-    # Fall back to guessing based on channel count.
-    else
-        case "$channels" in
-            1)
-                echo "mono"
-                ;;
-            2)
-                echo "stereo"
-                ;;
-            6)
-                echo "5.1"
-                ;;
-            8)
-                echo "7.1"
-                ;;
-            *)
-                log "ERROR" "Unsupported channel count: $channels"
-                return 1
-                ;;
-        esac
-    fi
+    echo "-af"
+    echo "aformat=channel_layouts=7.1|5.1|stereo|mono"
 }
+
 
 # This function encapsulates all the logic for processing a single video file.
 process_file() {
@@ -415,6 +389,7 @@ process_file() {
 
     # Determine Output Filename
     local filename_no_ext="${filename%.*}"
+    local ext="${file##*.}"
     local output_filename_no_ext
 
     # turns on case-insensitive matching for the shell
@@ -452,7 +427,7 @@ process_file() {
             log "ERROR" "FFmpeg validation failed with the following output:\n${error_output}"
 
             local fixed_file
-            fixed_file="$(dirname -- "$file")/${filename_no_ext}.fixed.mkv"
+            fixed_file="$(dirname -- "$file")/${filename_no_ext}.fixed.${ext}"
 
             if run_command ffmpeg -nostdin -i "$file" -c copy -map 0 -fflags +genpts "$fixed_file"; then
                 if mv -f "$fixed_file" "$file"; then
@@ -528,7 +503,7 @@ process_file() {
     # Run Encoding Command
     local cmd=(
         ffmpeg -nostdin -i "$file"
-        -map 0:v -map 0:a -map 0:s?
+        -map 0:v -map 0:a? -map 0:s?
         -c:v "$CODEC" -pix_fmt yuv420p10le
     )
     
@@ -542,7 +517,7 @@ process_file() {
         -g "$gop_value"
         -svtav1-params "$AV1_PARAMS"
         -c:a "${audio_params[@]}" -c:s copy
-        -movflags +faststart "$output_path"
+        "$output_path"
     )
 
     if ! run_command "${cmd[@]}"; then
@@ -580,13 +555,34 @@ main() {
         }
     done
     
-    # Verify Log File
+    # Verify and set Log File with automatic fallbacks
     if [[ "$LOGGING_ENABLED" == "true" ]]; then
-        local choice
-        
-        if ! mkdir -p "$(dirname "$LOG_FILE_PATH")" || ! touch "$LOG_FILE_PATH" || [[ ! -w "$LOG_FILE_PATH" ]]; then
-            echo -e "${RED}ERROR${RESET_COLOR}: Log file at \"${YELLOW}${LOG_FILE_PATH}${RESET_COLOR}\" is not writable."
+        local candidate_paths=(
+            "$LOG_FILE_PATH"
+            "${XDG_STATE_HOME:-$HOME/.local/state}/ffmpeg-av1-encode.log"
+            "$HOME/ffmpeg-av1-encode.log"
+        )
+        local valid_log_path=""
+
+        for path in "${candidate_paths[@]}"; do
+            local parent_dir
+            parent_dir="$(dirname "$path")"
             
+            # Check if directory can be created and file can be written to
+            if mkdir -p "$parent_dir" 2>/dev/null && touch "$path" 2>/dev/null && [[ -w "$path" ]]; then
+                valid_log_path="$path"
+                break
+            fi
+        done
+
+        if [[ -n "$valid_log_path" ]]; then
+            if [[ "$valid_log_path" != "$LOG_FILE_PATH" ]]; then
+                echo -e "${YELLOW}[NOTICE]${RESET_COLOR} Primary log directory is not writable. Logging to: \"${CYAN}${valid_log_path}${RESET_COLOR}\""
+                LOG_FILE_PATH="$valid_log_path"
+            fi
+        else
+            echo -e "${RED}ERROR${RESET_COLOR}: Could not find any writable directory for log files."
+            local choice
             read -p "Write \"q\" to quit, or press [Enter] to continue without file logging: " choice
 
             if [[ "$choice" =~ ^[Qq]$ ]]; then
