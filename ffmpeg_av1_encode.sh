@@ -73,8 +73,12 @@ readonly RESET_COLOR=$(tput sgr0)
 
 # Pre-defined parameter sets for the SVT-AV1 encoder, optimized for different content types.
 readonly CODEC="libsvtav1"
-readonly AV1_PARAMS_LIVE_ACTION="tune=0:enable-overlays=1:scd=1:scm=0:film-grain=4:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
-readonly AV1_PARAMS_ANIME="tune=0:enable-overlays=1:scd=1:scm=0:film-grain=2:film-grain-denoise=0:enable-tf=0:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:aq-mode=2"
+# Common base settings (Safe for Preset 3, 4, and 5)
+readonly AV1_DEFAULT_PARAMS="tune=0:scd=1:scm=0:aq-mode=2:enable-tf=1:enable-overlays=1:enable-tpl-la=1:enable-dlf=1:enable-cdef=1:enable-restoration=1:film-grain-denoise=0"
+
+# Specific profiles appending their distinct grain values
+readonly AV1_PARAMS_LIVE_ACTION="${AV1_DEFAULT_PARAMS}:film-grain=4"
+readonly AV1_PARAMS_ANIME="${AV1_DEFAULT_PARAMS}:film-grain=2"
 
 # Maps log level names to numerical values for easy comparison.
 readonly declare -A LOG_LEVELS=([DEBUG]=0 [INFO]=1 [WARN]=2 [ERROR]=3)
