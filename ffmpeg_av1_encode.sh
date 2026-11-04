@@ -101,8 +101,27 @@ AUDIO_MODE=""
 ########
 # TRAP #
 ########
-# Catch Ctrl+C (SIGINT) and exit the script instead of killing the current ffmpeg process
-trap 'echo -e "\n${RED}[ERROR] Script interrupted by user. Exiting.${RESET_COLOR}"; exit 130' SIGINT SIGTERM
+cleanup_and_exit() {
+    echo -e "\n[${RED}ERROR${RESET_COLOR}] Script interrupted by user. Stopping execution..."
+    
+    # Delete incomplete video encode
+    if [[ -n "$CURRENT_OUTPUT_FILE" && -f "$CURRENT_OUTPUT_FILE" ]]; then
+        echo -e "[${YELLOW}CLEANUP${RESET_COLOR}] Removing incomplete output file: \"${YELLOW}$CURRENT_OUTPUT_FILE${RESET_COLOR}\""
+        rm -f "$CURRENT_OUTPUT_FILE"
+    fi
+
+    # Delete temporary remux/fix file if interrupted during verification
+    if [[ -n "$CURRENT_FIXED_FILE" && -f "$CURRENT_FIXED_FILE" ]]; then
+        echo -e "[${YELLOW}CLEANUP${RESET_COLOR}] Removing temporary fixed file: \"${YELLOW}$CURRENT_FIXED_FILE${RESET_COLOR}\""
+        rm -f "$CURRENT_FIXED_FILE"
+    fi
+
+    exit 130
+}
+
+trap cleanup_and_exit SIGINT SIGTERM
+
+
 
 #############
 # FUNCTIONS #
@@ -371,8 +390,6 @@ set_audio_value(){
         echo "${target_bitrate}k"
     fi
     
-    echo "-b:a"
-    echo "${target_bitrate}k"
     echo "-af"
     echo "aformat=channel_layouts=7.1|5.1|stereo|mono"
 }
@@ -428,8 +445,11 @@ process_file() {
 
             local fixed_file
             fixed_file="$(dirname -- "$file")/${filename_no_ext}.fixed.${ext}"
+            CURRENT_FIXED_FILE="$fixed_file" # Set tracker for CTRL+C
 
             if run_command ffmpeg -nostdin -i "$file" -c copy -map 0 -fflags +genpts "$fixed_file"; then
+                CURRENT_FIXED_FILE="" # Clear tracker for CTRL+C
+                
                 if mv -f "$fixed_file" "$file"; then
                     log "INFO" "Fix ${GREEN}successful${RESET_COLOR}. Replaced original source file with the fixed version."
                 else
@@ -483,6 +503,13 @@ process_file() {
         return 1
     }
 
+    # HDR Detection
+    local av1_hdr_param=""
+    if [[ "$color_trc_value" == "smpte2084" || "$color_trc_value" == "arib-std-b67" ]]; then
+        log "INFO" "HDR content detected (TRC: ${CYAN}${color_trc_value}${RESET_COLOR}). Enabling HDR bitstream signaling."
+        av1_hdr_param=":enable-hdr=1" # Will be added within the ffmpeg command after $AV1_PARAMS; need ":"
+    fi
+
     local ffprobe_audio_metadata audio_params
     
     # If not copy, get audio metadata for compressing
@@ -503,8 +530,10 @@ process_file() {
     # Run Encoding Command
     local cmd=(
         ffmpeg -nostdin -i "$file"
-        -map 0:v -map 0:a? -map 0:s?
-        -c:v "$CODEC" -pix_fmt yuv420p10le
+        -map 0:v -map 0:a? -map 0:s? -map 0:t?
+        -map_metadata 0 -map_chapters 0
+        -c:v:0 "$CODEC" -pix_fmt:v:0 yuv420p10le
+        -c:v copy
     )
     
     [[ -n "$color_space_value" ]] && cmd+=( -colorspace "$color_space_value")
@@ -514,11 +543,14 @@ process_file() {
 
     cmd+=(
         -crf "$CRF_VALUE" -preset "$PRESET_VALUE"
-        -g "$gop_value"
-        -svtav1-params "$AV1_PARAMS"
-        -c:a "${audio_params[@]}" -c:s copy
+        -g "$gop_value" 
+        -svtav1-params "${AV1_PARAMS}${av1_hdr_param}"
+        -c:a "${audio_params[@]}"
+        -c:s copy -c:t copy
         "$output_path"
     )
+
+    CURRENT_OUTPUT_FILE="$output_path" # Set tracker for CTRL+C
 
     if ! run_command "${cmd[@]}"; then
         log "ERROR" "FFmpeg encoding FAILED for \"${YELLOW}${file}${RESET_COLOR}\". Deleting incomplete output file."
@@ -526,7 +558,10 @@ process_file() {
         return 1
     fi
 
+    CURRENT_OUTPUT_FILE="" # Clear tracker for CTRL+C
+    
     log "INFO" "${GREEN}Successfully${RESET_COLOR} encoded: \"${YELLOW}${output_path}${RESET_COLOR}\""
+    
     return 0
 }
 
